@@ -1,0 +1,180 @@
+---
+title: "EDA"
+author: "Jae Yeon Kim"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Install pkgs and load data 
+
+```{r}
+
+if (!require(pacman)) install.packages("pacman")
+
+pacman::p_load(glue, 
+               here, 
+               tidyverse,
+               readxl,
+               estimatr, 
+               remotes,
+               modelsummary,
+               marginaleffects, 
+               fixest, 
+               glmnet, 
+               naniar,
+               patchwork)
+
+install_github("vincentarelbundock/tinytable")
+library(tinytable)
+
+devtools::install_github("graemeblair/stdidx")
+library(stdidx)
+
+# Global ggplot2 theme
+ggplot2::theme_set(theme_minimal())
+```
+
+```{r}
+# Study 1 
+df1 <- read_xlsx(here("raw_data", "Stress+Testing+Black-Latino+Coalition_December+8,+2023_18.48.xlsx"))[-c(1:2),] # skip the first two rows 
+
+# Study 2
+df2 <- read_csv(here("raw_data", "Stress+Testing+Black-Latino+Coalition+Replication_March+3,+2024_10.40.csv"))[-c(1:2),] # skip the first two rows 
+```
+
+# Attention checks
+
+```{r}
+df1_attn_count <- df1 %>%
+  mutate(attention_check_passed = ifelse(AttentionCheck == 2, "Passed", "Failed")) %>%
+  ggplot(aes(x = attention_check_passed)) + 
+  geom_histogram(stat = "count") +
+  labs(
+    title = "Study 1",
+    x = "Attention check status", 
+    y = "Count")
+
+df2_attn_count <- df2 %>%
+  mutate(attention_check_passed = ifelse(AttentionCheck == 2, "Passed", "Failed")) %>%
+  ggplot(aes(x = attention_check_passed)) + 
+  geom_histogram(stat = "count") +
+  labs(
+    title = "Study 2",
+    x = "Attention check status", 
+    y = "Count")
+
+png(filename = here("outputs", "attention_checks.png"),
+    height = 8, 
+    width = 10, 
+    unit = "in", 
+    res = 1200)
+
+df1_attn_count + df2_attn_count + plot_annotation(tag_levels = "a")
+
+dev.off()
+```
+
+# Descriptive statistics  
+
+```{r}
+df1_race_count <- df1 %>%
+  mutate(race_cat = ifelse(Race == 2, "Black", "Others")) %>%
+  ggplot(aes(x = race_cat)) + 
+  geom_histogram(stat = "count") +
+  labs(
+    title = "Study 1",
+    x = "Racial composition", 
+    y = "Count")
+
+df2_race_count <- df2 %>%
+  mutate(race_cat = ifelse(Race == 2, "Black", "Others")) %>%
+  ggplot(aes(x = race_cat)) + 
+  geom_histogram(stat = "count") +
+  labs(
+    title = "Study 2",
+    x = "Racial composition", 
+    y = "Count")
+
+png(filename = here("outputs", "racial_composition.png"),
+    height = 8, 
+    width = 10, 
+    unit = "in", 
+    res = 1200)
+
+df1_race_count + df2_race_count + plot_annotation(tag_levels = "a")
+
+dev.off()
+```
+# ATE estimation
+
+1) exposure to shared discrimination increases Black solidarity with other people of color; 
+2) an additional unit shift in solidarity increases Black support for pro-Latino policies; and,
+3) exposure to the distinctiveness manipulation (which was meant to reduce solidarity) decreases Black solidarity with other people of color, although this decline is small and statistically insignificant. 
+
+```{r}
+df1 <- df1 %>%
+  filter(Condition != "NA NA NA") %>%
+  mutate(Condition = paste(Control_Turtle, SharedDisc, Incommensurate)) %>%
+  mutate(assignment_status = 
+           case_when(
+             Condition == "1 NA 1" ~ "Control + Incommensurate",
+             Condition == "1 NA NA" ~ "Control",
+             Condition == "NA 1 1" ~ "Shared Discrimination + Incommensurate",
+             Condition == "NA 1 NA" ~ "Shared Discrimination"
+           ))
+
+df2 <- df2 %>%
+  filter(Condition != "NA NA NA") %>%
+  mutate(Condition = paste(Control_Turtle, SharedDisc, Incommensurate)) %>%
+  mutate(assignment_status = 
+           case_when(
+             Condition == "1 NA 1" ~ "Control + Incommensurate",
+             Condition == "1 NA NA" ~ "Control",
+             Condition == "NA 1 1" ~ "Shared Discrimination + Incommensurate",
+             Condition == "NA 1 NA" ~ "Shared Discrimination"
+           ))
+```
+
+```{r}
+df1 <- df1 %>%
+  mutate(
+    # Solidarity index
+    sol_index = (as.numeric(Solidarity_Bond) + as.numeric(Solidarity_Allies) + as.numeric(Solidariy_CFate))/3, 
+    # Latino support index
+    latino_support_index = (as.numeric(Latino_1) + as.numeric(Latino_2R) + as.numeric(Latino_3) + as.numeric(Latino_4))/4)
+
+df2 <- df2 %>%
+  mutate(
+    # Solidarity index
+    sol_index = (as.numeric(Solidarity_Bond) + as.numeric(Solidarity_Allies) + as.numeric(Solidariy_CFate))/3, 
+    # Latino support index
+    latino_support_index = (as.numeric(Latino_1) + as.numeric(Latino_2R) + as.numeric(Latino_3) + as.numeric(Latino_4))/4)
+```
+
+```{r}
+df_mods <- bind_rows(
+  df1 %>%
+    select(sol_index, latino_support_index, assignment_status) %>%
+    mutate(study = "Study 1"),
+  df2 %>%
+    select(sol_index, latino_support_index, assignment_status) %>%
+    mutate(study = "Study2") 
+  ) %>%
+  mutate(study = factor(study))
+```
+
+```{r}
+mods <- list(
+  "POC solidarity index" = feols(sol_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero"), 
+  "Latino support index" = feols(latino_support_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero")
+)
+
+modelsummary(mods,
+             estimate = c("{estimate}{stars} \n [{conf.low}, {conf.high}] \n p = {p.value}"),
+             statistic = NULL,
+             output = "gt"
+             )
+             #coef_map = mad_cm,
+             #coef_omit = "Intercept"
+#)
+```
