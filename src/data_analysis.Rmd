@@ -107,10 +107,6 @@ dev.off()
 ```
 # ATE estimation
 
-1) exposure to shared discrimination increases Black solidarity with other people of color; 
-2) an additional unit shift in solidarity increases Black support for pro-Latino policies; and,
-3) exposure to the distinctiveness manipulation (which was meant to reduce solidarity) decreases Black solidarity with other people of color, although this decline is small and statistically insignificant. 
-
 ```{r}
 df1 <- df1 %>%
   filter(Condition != "NA NA NA") %>%
