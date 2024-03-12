@@ -165,8 +165,10 @@ df_mods <- bind_rows(
 
 ```{r}
 mods <- list(
-  "POC solidarity index" = feols(sol_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero"), 
-  "Latino support index" = feols(latino_support_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero")
+  "POC solidarity index" = feols(sol_index ~ factor(assignment_status), data = df_mods, vcov = "hetero"),
+  "POC solidarity index (with FE)" = feols(sol_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero"), 
+  "Latino support index" = feols(latino_support_index ~ factor(assignment_status), data = df_mods, vcov = "hetero"),
+  "Latino support index (with FE)" = feols(latino_support_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero")
 )
 
 modelsummary(mods,
