@@ -15,10 +15,13 @@ pacman::p_load(glue,
                here, 
                tidyverse,
                readxl,
+               boot, 
                estimatr, 
                remotes,
                modelsummary,
-               marginaleffects, 
+               marginaleffects,
+               mediation,
+               lme4, 
                fixest, 
                glmnet, 
                naniar,
@@ -105,12 +108,145 @@ df1_race_count + df2_race_count + plot_annotation(tag_levels = "a")
 
 dev.off()
 ```
+
+```{r}
+df1 <- df1 %>%
+  mutate(Solidarity_Bond = as.numeric(Solidarity_Bond), 
+         Solidarity_Allies = as.numeric(Solidarity_Allies), 
+         Solidariy_CFate = as.numeric(Solidariy_CFate), 
+         Latino_1 = as.numeric(Latino_1), 
+         Latino_2R = as.numeric(Latino_2R), 
+         Latino_3 = as.numeric(Latino_3), 
+         Latino_4 = as.numeric(Latino_4)) %>%
+  mutate(
+    # Solidarity index
+    sol_index = idx_mean(Solidarity_Bond, Solidarity_Allies, Solidariy_CFate), 
+    # Latino support index
+    latino_support_index = idx_mean(Latino_1, Latino_2R, Latino_3, Latino_4)
+    )
+
+df2 <- df2 %>%
+  mutate(Solidarity_Bond = as.numeric(Solidarity_Bond), 
+       Solidarity_Allies = as.numeric(Solidarity_Allies), 
+       Solidariy_CFate = as.numeric(Solidariy_CFate), 
+       Latino_1 = as.numeric(Latino_1), 
+       Latino_2R = as.numeric(Latino_2R), 
+       Latino_3 = as.numeric(Latino_3), 
+       Latino_4 = as.numeric(Latino_4)) %>%
+  mutate(
+    # Solidarity index
+    sol_index = idx_mean(Solidarity_Bond, Solidarity_Allies, Solidariy_CFate), 
+    # Latino support index
+    latino_support_index = idx_mean(Latino_1, Latino_2R, Latino_3, Latino_4)
+    )
+```
+
+```{r}
+df_med_mods <- bind_rows(
+  df1 %>%
+    dplyr::select(sol_index, latino_support_index, Control_Turtle, SharedDisc, Incommensurate) %>%
+    mutate(study = "Study 1"),
+  df2 %>%
+    dplyr::select(sol_index, latino_support_index, Control_Turtle, SharedDisc, Incommensurate) %>%
+    mutate(study = "Study 2") 
+  ) %>%
+  mutate(study = factor(study))
+```
+
+```{r}
+df_med_mods <- df_med_mods %>%
+  mutate(Condition = paste(Control_Turtle, SharedDisc, Incommensurate)) %>%
+  filter(Condition != "NA NA NA") %>%
+  replace_na(list(Control_Turtle = "0", 
+             SharedDisc = "0", 
+             Incommensurate = "0")) %>%
+  mutate(Control_Turtle = as.numeric(Control_Turtle), 
+         SharedDisc = as.numeric(SharedDisc), 
+         Incommensurate = as.numeric(Incommensurate)) 
+
+df_med_mods %>% 
+  group_by(Control_Turtle, SharedDisc, Incommensurate) %>%
+  count()
+```
+
+```{r}
+df_med_mods %>%
+  group_by(SharedDisc, Incommensurate, study) %>%
+  summarize(
+    estimate = mean(sol_index, na.rm = TRUE), 
+    lower_ci = mean(sol_index, na.rm = TRUE) - qt(0.975, n() - 1) * sd(sol_index, na.rm = TRUE) / sqrt(n()), 
+    upper_ci = mean(sol_index, na.rm = TRUE) + qt(0.975, n() - 1) * sd(sol_index, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup() %>%
+  mutate(assignment = rep(c("Control", "Incommensurate", "SharedDisc", "SharedDisc + Incommensurate"), each = 2)) %>%
+  ggplot(aes(x = assignment, y = estimate, ymax = upper_ci, ymin = lower_ci, col = study)) +
+  geom_pointrange() +
+  labs(x = "", y = "POC solidarity index", 
+       col = "Study")
+```
+
+```{r}
+df_med_mods %>%
+  group_by(SharedDisc, Incommensurate, study) %>%
+  summarize(
+    estimate = mean(latino_support_index, na.rm = TRUE), 
+    lower_ci = mean(latino_support_index, na.rm = TRUE) - qt(0.975, n() - 1) * sd(sol_index, na.rm = TRUE) / sqrt(n()), 
+    upper_ci = mean(latino_support_index, na.rm = TRUE) + qt(0.975, n() - 1) * sd(sol_index, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup() %>%
+  mutate(assignment = rep(c("Control", "Incommensurate", "SharedDisc", "SharedDisc + Incommensurate"), each = 2)) %>%
+  ggplot(aes(x = assignment, y = estimate, ymax = upper_ci, ymin = lower_ci, col = study)) +
+  geom_pointrange() +
+  labs(x = "", y = "Latino support index",
+       col = "Study")
+```
+
+# Causal mediation analysis 
+
+```{r}
+med.fit_sol <- lmer(Incommensurate ~ SharedDisc + (1|study), data = df_med_mods %>%
+                filter(!is.na(sol_index)))
+
+out.fit_sol <- lmer(sol_index ~ Incommensurate + SharedDisc + (1|study), data = df_med_mods)
+
+out.fit_sol_intc <- lmer(sol_index ~ Incommensurate * SharedDisc + (1|study), data = df_med_mods)
+
+med.out_sol <- mediate(med.fit_sol, out.fit_sol, treat = "SharedDisc", mediator = "Incommensurate", sims = 1000)
+
+med.out_sol_intc <- mediate(med.fit_sol, out.fit_sol_intc, treat = "SharedDisc", mediator = "Incommensurate", sims = 1000)
+```
+
+```{r}
+med.fit_latino <- lmer(Incommensurate ~ SharedDisc + (1|study), data = df_med_mods %>%
+                filter(!is.na(latino_support_index)))
+
+out.fit_latino <- lmer(latino_support_index ~ Incommensurate + SharedDisc + (1|study), data = df_med_mods)
+
+out.fit_latino_intc <- lmer(latino_support_index ~ Incommensurate * SharedDisc + (1|study), data = df_med_mods)
+
+med.out_latino <- mediate(med.fit_latino, out.fit_latino, treat = "SharedDisc", mediator = "Incommensurate", sims = 1000)
+
+med.out_latino_intc <- mediate(med.fit_latino, out.fit_latino_intc, treat = "SharedDisc", mediator = "Incommensurate", sims = 1000)
+```
+
+```{r}
+set.seed(1234)
+
+# Treatment and mediator 
+summary(med.out_sol)
+summary(med.out_latino)
+
+# Treatment and mediator interaction
+summary(med.out_sol_intc)
+summary(med.out_latino_intc)
+```
+
 # ATE estimation
 
 ```{r}
 df1 <- df1 %>%
-  filter(Condition != "NA NA NA") %>%
   mutate(Condition = paste(Control_Turtle, SharedDisc, Incommensurate)) %>%
+  filter(Condition != "NA NA NA") %>%
   mutate(assignment_status = 
            case_when(
              Condition == "1 NA 1" ~ "Control + Incommensurate",
@@ -120,8 +256,8 @@ df1 <- df1 %>%
            ))
 
 df2 <- df2 %>%
-  filter(Condition != "NA NA NA") %>%
   mutate(Condition = paste(Control_Turtle, SharedDisc, Incommensurate)) %>%
+  filter(Condition != "NA NA NA") %>%
   mutate(assignment_status = 
            case_when(
              Condition == "1 NA 1" ~ "Control + Incommensurate",
@@ -129,31 +265,15 @@ df2 <- df2 %>%
              Condition == "NA 1 1" ~ "Shared Discrimination + Incommensurate",
              Condition == "NA 1 NA" ~ "Shared Discrimination"
            ))
-```
-
-```{r}
-df1 <- df1 %>%
-  mutate(
-    # Solidarity index
-    sol_index = (as.numeric(Solidarity_Bond) + as.numeric(Solidarity_Allies) + as.numeric(Solidariy_CFate))/3, 
-    # Latino support index
-    latino_support_index = (as.numeric(Latino_1) + as.numeric(Latino_2R) + as.numeric(Latino_3) + as.numeric(Latino_4))/4)
-
-df2 <- df2 %>%
-  mutate(
-    # Solidarity index
-    sol_index = (as.numeric(Solidarity_Bond) + as.numeric(Solidarity_Allies) + as.numeric(Solidariy_CFate))/3, 
-    # Latino support index
-    latino_support_index = (as.numeric(Latino_1) + as.numeric(Latino_2R) + as.numeric(Latino_3) + as.numeric(Latino_4))/4)
 ```
 
 ```{r}
 df_mods <- bind_rows(
   df1 %>%
-    select(sol_index, latino_support_index, assignment_status) %>%
+    dplyr::select(sol_index, latino_support_index, assignment_status) %>%
     mutate(study = "Study 1"),
   df2 %>%
-    select(sol_index, latino_support_index, assignment_status) %>%
+    dplyr::select(sol_index, latino_support_index, assignment_status) %>%
     mutate(study = "Study2") 
   ) %>%
   mutate(study = factor(study))
@@ -166,7 +286,9 @@ mods <- list(
   "Latino support index" = feols(latino_support_index ~ factor(assignment_status), data = df_mods, vcov = "hetero"),
   "Latino support index (with FE)" = feols(latino_support_index ~ factor(assignment_status) | study, data = df_mods, vcov = "hetero")
 )
+```
 
+```{r}
 modelsummary(mods,
              estimate = c("{estimate}{stars} \n [{conf.low}, {conf.high}] \n p = {p.value}"),
              statistic = NULL,
